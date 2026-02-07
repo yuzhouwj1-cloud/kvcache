@@ -1,0 +1,11 @@
+sequence_id,sequence_length,request_type
+0,1024,prefill
+1,1536,prefill
+2,2048,prefill
+0,1024,decoding
+1,1536,decoding
+3,512,prefill
+2,2048,decoding
+4,4096,prefill
+0,1024,prefill
+1,1536,prefill

@@ -1,0 +1,8 @@
+seed: 1
+num_requests: 1000
+sequence_length: 2048
+model_kv_bytes_per_token: 256
+cache_capacity_bytes: 268435456
+policy: lru
+reuse_model: zipf
+

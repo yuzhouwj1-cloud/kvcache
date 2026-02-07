@@ -1,0 +1,19 @@
+seed: 7
+num_requests: 10
+num_sequences: 5
+model_kv_bytes_per_token: 256
+cache_capacity_bytes: 1
+policy: lru
+reuse_model: zipf
+reuse_zipf_a: 1.2
+block_size_tokens: 512
+workload:
+  type: trace
+  trace_path: ../FAST25-release/arxiv-trace/mooncake_trace.jsonl
+  cache_capacity_fraction: 0.5
+time_model:
+  compute_tokens_per_ms: 1200
+  l1_bandwidth_bytes_per_ms: 7.5e8
+  l2_bandwidth_bytes_per_ms: 3.0e8
+  miss_bandwidth_bytes_per_ms: 6.0e7
+  hit_compute_fraction: 0.2

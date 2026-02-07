@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trace Viewer</title>
+    <style>
+      :root {
+        --bg: #f6f7fb;
+        --card: #ffffff;
+        --text: #1c2333;
+        --muted: #5b6373;
+        --border: #d9dde7;
+        --accent: #1d6cf2;
+        --accent-2: #0f4fbf;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .container {
+        max-width: 1100px;
+        margin: 24px auto 48px;
+        padding: 0 20px;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 12px;
+      }
+      .row {
+        display: grid;
+        gap: 16px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+      }
+      .controls input[type="file"] {
+        padding: 6px;
+      }
+      .btn {
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        background: #fff;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .btn.primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #fff;
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .kvs {
+        display: grid;
+        gap: 8px;
+      }
+      .kv {
+        display: grid;
+        grid-template-columns: 160px 1fr;
+        gap: 10px;
+        font-size: 14px;
+      }
+      .kv .k {
+        color: var(--muted);
+      }
+      pre {
+        background: #f2f4f8;
+        border-radius: 8px;
+        padding: 12px;
+        overflow: auto;
+        font-size: 12px;
+        margin: 0;
+      }
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px;
+      }
+      .stat {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px;
+        background: #fafbff;
+      }
+      .stat .label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .stat .value {
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .muted { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Trace Viewer</h1>
+      <div class="row">
+        <div class="card">
+          <div class="controls">
+            <input id="fileInput" type="file" accept=".jsonl,.json" />
+            <button id="prevBtn" class="btn" disabled>Prev</button>
+            <button id="nextBtn" class="btn primary" disabled>Next</button>
+            <label class="muted">Go to #</label>
+            <input id="gotoIndex" type="number" min="1" style="width: 90px;" />
+            <button id="gotoBtn" class="btn" disabled>Go</button>
+            <span id="indexInfo" class="muted">No file loaded</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 style="margin:0 0 10px; font-size:16px;">Current Record</h2>
+          <div id="recordFields" class="kvs"></div>
+          <h3 style="margin:14px 0 8px; font-size:14px;">Raw JSON</h3>
+          <pre id="recordRaw">Load a trace to view a record.</pre>
+        </div>
+
+        <div class="card">
+          <h2 style="margin:0 0 10px; font-size:16px;">Trace Stats</h2>
+          <div id="stats" class="stats-grid"></div>
+          <div id="parseInfo" class="muted" style="margin-top:10px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const fileInput = document.getElementById('fileInput');
+      const prevBtn = document.getElementById('prevBtn');
+      const nextBtn = document.getElementById('nextBtn');
+      const gotoIndex = document.getElementById('gotoIndex');
+      const gotoBtn = document.getElementById('gotoBtn');
+      const indexInfo = document.getElementById('indexInfo');
+      const recordFields = document.getElementById('recordFields');
+      const recordRaw = document.getElementById('recordRaw');
+      const statsEl = document.getElementById('stats');
+      const parseInfo = document.getElementById('parseInfo');
+
+      let records = [];
+      let currentIndex = 0;
+      let parseErrors = 0;
+
+      function fmtNum(n) {
+        if (n == null || Number.isNaN(n)) return '-';
+        if (Math.abs(n) >= 1000) return n.toLocaleString();
+        return String(n);
+      }
+
+      function calcStats(items) {
+        const stats = {};
+        const numericKeys = ['timestamp', 'input_length', 'output_length'];
+        for (const key of numericKeys) {
+          const vals = items.map(r => r[key]).filter(v => typeof v === 'number');
+          stats[key] = summarize(vals);
+        }
+        const hashLens = items.map(r => Array.isArray(r.hash_ids) ? r.hash_ids.length : null)
+          .filter(v => typeof v === 'number');
+        stats.hash_ids_len = summarize(hashLens);
+        return stats;
+      }
+
+      function summarize(vals) {
+        if (!vals.length) return { count: 0, min: null, max: null, avg: null };
+        let min = vals[0], max = vals[0], sum = 0;
+        for (const v of vals) {
+          if (v < min) min = v;
+          if (v > max) max = v;
+          sum += v;
+        }
+        return { count: vals.length, min, max, avg: sum / vals.length };
+      }
+
+      function setStats(items) {
+        const stats = calcStats(items);
+        const boxes = [];
+        boxes.push(statBox('Records', fmtNum(items.length)));
+        if (stats.timestamp.count) {
+          boxes.push(statBox('Timestamp min/max', `${fmtNum(stats.timestamp.min)} / ${fmtNum(stats.timestamp.max)}`));
+        }
+        if (stats.input_length.count) {
+          boxes.push(statBox('Input length avg', fmtNum(Math.round(stats.input_length.avg))));
+          boxes.push(statBox('Input length min/max', `${fmtNum(stats.input_length.min)} / ${fmtNum(stats.input_length.max)}`));
+        }
+        if (stats.output_length.count) {
+          boxes.push(statBox('Output length avg', fmtNum(Math.round(stats.output_length.avg))));
+          boxes.push(statBox('Output length min/max', `${fmtNum(stats.output_length.min)} / ${fmtNum(stats.output_length.max)}`));
+        }
+        if (stats.hash_ids_len.count) {
+          boxes.push(statBox('hash_ids len avg', fmtNum(Math.round(stats.hash_ids_len.avg))));
+          boxes.push(statBox('hash_ids len min/max', `${fmtNum(stats.hash_ids_len.min)} / ${fmtNum(stats.hash_ids_len.max)}`));
+        }
+        statsEl.innerHTML = boxes.join('');
+        parseInfo.textContent = `Parsed ${items.length} records. Parse errors: ${parseErrors}.`;
+      }
+
+      function statBox(label, value) {
+        return `
+          <div class="stat">
+            <div class="label">${label}</div>
+            <div class="value">${value}</div>
+          </div>
+        `;
+      }
+
+      function setRecord(index) {
+        if (!records.length) return;
+        currentIndex = Math.min(Math.max(index, 0), records.length - 1);
+        const r = records[currentIndex];
+        indexInfo.textContent = `Record ${currentIndex + 1} / ${records.length}`;
+        gotoIndex.value = currentIndex + 1;
+        prevBtn.disabled = currentIndex === 0;
+        nextBtn.disabled = currentIndex >= records.length - 1;
+
+        const fields = [];
+        for (const [k, v] of Object.entries(r)) {
+          if (k === 'hash_ids') continue;
+          let display = v;
+          if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+            display = JSON.stringify(v);
+          }
+          fields.push(`
+            <div class="kv">
+              <div class="k">${k}</div>
+              <div class="v">${String(display)}</div>
+            </div>
+          `);
+        }
+        if (Array.isArray(r.hash_ids)) {
+          fields.push(`
+            <div class="kv">
+              <div class="k">hash_ids</div>
+              <div class="v">${r.hash_ids.join(', ')}</div>
+            </div>
+          `);
+          fields.push(`
+            <div class="kv">
+              <div class="k">hash_ids length</div>
+              <div class="v">${r.hash_ids.length}</div>
+            </div>
+          `);
+        }
+        recordFields.innerHTML = fields.join('');
+        recordRaw.textContent = JSON.stringify(r, null, 2);
+      }
+
+      fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const text = await file.text();
+        const lines = text.split(/\r?\n/);
+        const items = [];
+        parseErrors = 0;
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            items.push(JSON.parse(trimmed));
+          } catch {
+            parseErrors += 1;
+          }
+        }
+        // If file is a single JSON array, try that.
+        if (!items.length) {
+          try {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed)) {
+              for (const it of parsed) items.push(it);
+            }
+          } catch {}
+        }
+        records = items;
+        prevBtn.disabled = records.length === 0;
+        nextBtn.disabled = records.length === 0;
+        gotoBtn.disabled = records.length === 0;
+        if (records.length) {
+          setStats(records);
+          setRecord(0);
+        } else {
+          indexInfo.textContent = 'No records parsed';
+          recordFields.innerHTML = '';
+          recordRaw.textContent = 'Failed to parse file.';
+          statsEl.innerHTML = '';
+          parseInfo.textContent = '';
+        }
+      });
+
+      prevBtn.addEventListener('click', () => setRecord(currentIndex - 1));
+      nextBtn.addEventListener('click', () => setRecord(currentIndex + 1));
+      gotoBtn.addEventListener('click', () => {
+        const idx = parseInt(gotoIndex.value, 10);
+        if (!Number.isFinite(idx)) return;
+        setRecord(idx - 1);
+      });
+    </script>
+  </body>
+</html>
