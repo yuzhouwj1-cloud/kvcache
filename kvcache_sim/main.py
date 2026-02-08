@@ -29,15 +29,19 @@ def main() -> None:
         unique_blocks = count_unique_hash_ids(cfg.trace_path)
         if unique_blocks <= 0:
             raise ValueError(f"No hash_ids found in trace: {cfg.trace_path}")
+        capacity_blocks = int(unique_blocks * cfg.trace_cache_capacity_fraction)
+        if capacity_blocks <= 0:
+            raise ValueError("Computed cache capacity blocks is zero; check trace_cache_capacity_fraction")
         block_bytes = cfg.block_size_tokens * cfg.model_kv_bytes_per_token
-        capacity = int(unique_blocks * block_bytes * cfg.trace_cache_capacity_fraction)
-        if capacity <= 0:
-            raise ValueError("Computed cache capacity is zero; check trace_cache_capacity_fraction")
+        capacity = capacity_blocks * block_bytes
         cfg = replace(
             cfg,
             cache_capacity_bytes=capacity,
+            cache_capacity_blocks=capacity_blocks,
             l1_cache_capacity_bytes=None,
             l2_cache_capacity_bytes=None,
+            l1_cache_capacity_blocks=None,
+            l2_cache_capacity_blocks=None,
         )
 
     cache = build_cache(cfg)

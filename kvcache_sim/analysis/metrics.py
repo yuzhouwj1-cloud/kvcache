@@ -27,6 +27,7 @@ class MetricsReport:
     ttft_p95_ms: float
     ttft_p99_ms: float
     throughput_tokens_per_s: float
+    throughput_source: str
 
     def to_text(self) -> str:
         hit_rate = self.request_full_prefix_hit_rate
@@ -47,7 +48,7 @@ class MetricsReport:
             f"TTFT mean (ms): {self.ttft_mean_ms:.2f}\n"
             f"TTFT p95 (ms): {self.ttft_p95_ms:.2f}\n"
             f"TTFT p99 (ms): {self.ttft_p99_ms:.2f}\n"
-            f"Throughput (tokens/s): {self.throughput_tokens_per_s:.2f}\n"
+            f"Throughput (tokens/s): {self.throughput_tokens_per_s:.2f} ({self.throughput_source})\n"
         )
 
 
@@ -89,6 +90,9 @@ class MetricsCollector:
         self.prefix_block_total = 0
         self._ttft_ms: List[float] = []
         self._total_tokens = 0
+        self._timestamped_tokens = 0
+        self._first_timestamp_ms: int | None = None
+        self._last_timestamp_ms: int | None = None
 
     def record_request(
         self,
@@ -107,6 +111,11 @@ class MetricsCollector:
         self.bytes_written += write_bytes
         self._ttft_ms.append(ttft_ms)
         self._total_tokens += req.sequence_length
+        if req.timestamp_ms is not None and req.timestamp_ms > 0:
+            if self._first_timestamp_ms is None:
+                self._first_timestamp_ms = req.timestamp_ms
+            self._last_timestamp_ms = req.timestamp_ms
+            self._timestamped_tokens += req.input_length or req.sequence_length
         self.prefix_block_hits += block_hits
         self.prefix_block_total += block_total
         if cache_result.hit:
@@ -129,8 +138,19 @@ class MetricsCollector:
         ttft_mean = float(np.mean(self._ttft_ms)) if self._ttft_ms else 0.0
         ttft_p95 = float(np.percentile(self._ttft_ms, 95)) if self._ttft_ms else 0.0
         ttft_p99 = float(np.percentile(self._ttft_ms, 99)) if self._ttft_ms else 0.0
-        total_time_s = sum(self._ttft_ms) / 1000.0 if self._ttft_ms else 0.0
-        throughput = self._total_tokens / total_time_s if total_time_s > 0 else 0.0
+        throughput_source = "ttft"
+        if (
+            self._first_timestamp_ms is not None
+            and self._last_timestamp_ms is not None
+            and self._last_timestamp_ms > self._first_timestamp_ms
+            and self._timestamped_tokens > 0
+        ):
+            total_time_s = (self._last_timestamp_ms - self._first_timestamp_ms) / 1000.0
+            throughput = self._timestamped_tokens / total_time_s
+            throughput_source = "timestamp"
+        else:
+            total_time_s = sum(self._ttft_ms) / 1000.0 if self._ttft_ms else 0.0
+            throughput = self._total_tokens / total_time_s if total_time_s > 0 else 0.0
         return MetricsReport(
             total_requests=self.total_requests,
             request_full_prefix_hits=self.request_full_prefix_hits,
@@ -147,4 +167,5 @@ class MetricsCollector:
             ttft_p95_ms=ttft_p95,
             ttft_p99_ms=ttft_p99,
             throughput_tokens_per_s=throughput,
+            throughput_source=throughput_source,
         )
