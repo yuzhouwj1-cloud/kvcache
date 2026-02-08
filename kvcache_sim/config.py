@@ -19,8 +19,11 @@ class SimulatorConfig:
     sequence_length_dist: "SequenceLengthSpec"
     model_kv_bytes_per_token: int
     cache_capacity_bytes: int
+    cache_capacity_blocks: Optional[int]
     l1_cache_capacity_bytes: Optional[int]
     l2_cache_capacity_bytes: Optional[int]
+    l1_cache_capacity_blocks: Optional[int]
+    l2_cache_capacity_blocks: Optional[int]
     policy: str
     reuse_model: str
     reuse_zipf_a: float
@@ -67,6 +70,9 @@ def load_config(path: str | Path) -> SimulatorConfig:
         if not trace_path.is_absolute():
             trace_path = base_dir / trace_path
     sequence_length = int(data.get("sequence_length", 0) or 0)
+    model_kv_bytes_per_token = int(data["model_kv_bytes_per_token"])
+    block_size_tokens = int(data.get("block_size_tokens", 512))
+    block_bytes = block_size_tokens * model_kv_bytes_per_token
     seq_spec_data = data.get("sequence_length_dist")
     if seq_spec_data is None:
         seq_spec = SequenceLengthSpec(dist="fixed", value=sequence_length)
@@ -91,22 +97,41 @@ def load_config(path: str | Path) -> SimulatorConfig:
         hit_compute_fraction=float(time_data.get("hit_compute_fraction", 0.0)),
     )
 
+    cache_capacity_blocks = _maybe_int(data.get("cache_capacity_blocks"))
+    cache_capacity_bytes = _maybe_int(data.get("cache_capacity_bytes"))
+    if cache_capacity_blocks is not None:
+        cache_capacity_bytes = cache_capacity_blocks * block_bytes
+    if cache_capacity_bytes is None:
+        raise ValueError("cache_capacity_bytes or cache_capacity_blocks must be set")
+
+    l1_cache_capacity_blocks = _maybe_int(data.get("l1_cache_capacity_blocks"))
+    l2_cache_capacity_blocks = _maybe_int(data.get("l2_cache_capacity_blocks"))
+    l1_cache_capacity_bytes = _maybe_int(data.get("l1_cache_capacity_bytes"))
+    l2_cache_capacity_bytes = _maybe_int(data.get("l2_cache_capacity_bytes"))
+    if l1_cache_capacity_blocks is not None:
+        l1_cache_capacity_bytes = l1_cache_capacity_blocks * block_bytes
+    if l2_cache_capacity_blocks is not None:
+        l2_cache_capacity_bytes = l2_cache_capacity_blocks * block_bytes
+
     return SimulatorConfig(
         seed=int(data.get("seed", 1)),
         num_requests=int(data["num_requests"]),
         num_sequences=int(data.get("num_sequences", data["num_requests"])),
         sequence_length=sequence_length,
         sequence_length_dist=seq_spec,
-        model_kv_bytes_per_token=int(data["model_kv_bytes_per_token"]),
-        cache_capacity_bytes=int(data["cache_capacity_bytes"]),
-        l1_cache_capacity_bytes=_maybe_int(data.get("l1_cache_capacity_bytes")),
-        l2_cache_capacity_bytes=_maybe_int(data.get("l2_cache_capacity_bytes")),
+        model_kv_bytes_per_token=model_kv_bytes_per_token,
+        cache_capacity_bytes=cache_capacity_bytes,
+        cache_capacity_blocks=cache_capacity_blocks,
+        l1_cache_capacity_bytes=l1_cache_capacity_bytes,
+        l2_cache_capacity_bytes=l2_cache_capacity_bytes,
+        l1_cache_capacity_blocks=l1_cache_capacity_blocks,
+        l2_cache_capacity_blocks=l2_cache_capacity_blocks,
         policy=str(data.get("policy", "lru")),
         reuse_model=str(data.get("reuse_model", "zipf")),
         reuse_zipf_a=float(data.get("reuse_zipf_a", 1.2)),
         workload_type=workload_type,
         trace_path=trace_path,
-        block_size_tokens=int(data.get("block_size_tokens", 512)),
+        block_size_tokens=block_size_tokens,
         trace_cache_capacity_fraction=_maybe_float(trace_cache_capacity_fraction),
         time_model=time_model,
     )
