@@ -32,9 +32,14 @@ configs/                  # Example configs
 - Block size: `block_size_tokens` (default `512`) controls per-block KV size for trace inputs.
 - Prefix cache: JSONL traces use prefix-hit semantics (stop at first miss; remaining blocks treated as misses and written).
 - Cache sizing: `cache_capacity_bytes` is still supported, but you can also specify `cache_capacity_blocks` (block count) which is converted using `block_size_tokens * model_kv_bytes_per_token`.
-- Trace cache sizing: `workload.cache_capacity_fraction` (or `trace_cache_capacity_fraction`) sets cache capacity to a fraction of unique `hash_ids` in JSONL traces (deduplicated by block ID).
+- Trace cache sizing: `workload.cache_capacity_fraction` (or `trace_cache_capacity_fraction`) sets cache capacity to a fraction of unique `hash_ids` in JSONL traces (deduplicated by block ID); supports `lru` and `lfu` policies.
 
 Example trace run:
 ```bash
 python3 -m kvcache_sim.main --config configs/trace.yaml
 ```
+
+## Analysis & Benchmark Tools
+- `scripts/trace_cache_bench.py`: run cache hit-rate matrices for traces with cache fraction, cache time, and capacity summaries.
+- `scripts/trace_pattern_analysis.py`: analyze trace patterns (system prompt prefixes, session growth, prefix-hit attribution).
+- `scripts/trace_session_examples.py`: extract first/longest/average-length session examples (timestamp + hash_ids) from traces.
