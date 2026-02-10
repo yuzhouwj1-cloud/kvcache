@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import OrderedDict, defaultdict
 
-from kvcache_sim.cache.interfaces import Cache, CacheLookup
+from kvcache_sim.cache.interfaces import Cache, CacheLookup, CacheMetadata
 
 
 class LFUCache(Cache):
@@ -16,7 +16,7 @@ class LFUCache(Cache):
         self._hits = 0
         self._misses = 0
 
-    def get(self, key: int, size_bytes: int) -> CacheLookup:
+    def get(self, key: int, size_bytes: int, metadata: CacheMetadata | None = None) -> CacheLookup:
         if key in self._items:
             self._hits += 1
             self._bump_freq(key)
@@ -26,7 +26,7 @@ class LFUCache(Cache):
         self._insert(key, size_bytes)
         return CacheLookup(hit=False, level="miss")
 
-    def put(self, key: int, size_bytes: int) -> None:
+    def put(self, key: int, size_bytes: int, metadata: CacheMetadata | None = None) -> None:
         if key in self._items:
             existing = self._items.get(key, 0)
             self._used_bytes -= existing

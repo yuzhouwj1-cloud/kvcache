@@ -106,6 +106,43 @@
         font-size: 16px;
         font-weight: 600;
       }
+      .viz-wrap {
+        display: grid;
+        gap: 12px;
+      }
+      .viz-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 16px;
+        align-items: center;
+        font-size: 13px;
+      }
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        border: 1px solid var(--border);
+      }
+      .viz-meta {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      #blockCanvas {
+        width: 100%;
+        height: auto;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #fbfcff;
+      }
+      .canvas-wrap {
+        overflow: auto;
+        max-height: 520px;
+      }
       .muted { color: var(--muted); }
     </style>
   </head>
@@ -137,6 +174,22 @@
           <div id="stats" class="stats-grid"></div>
           <div id="parseInfo" class="muted" style="margin-top:10px;"></div>
         </div>
+
+        <div class="card">
+          <h2 style="margin:0 0 10px; font-size:16px;">Block Reuse Map</h2>
+          <div class="viz-wrap">
+            <div class="viz-legend">
+              <span class="legend-item"><span class="swatch" style="background:#1d6cf2;"></span>System prompt</span>
+              <span class="legend-item"><span class="swatch" style="background:#00a878;"></span>Session reuse</span>
+              <span class="legend-item"><span class="swatch" style="background:#6a4df5;"></span>Overlap</span>
+              <span class="legend-item"><span class="swatch" style="background:#c7cbd6;"></span>Other</span>
+            </div>
+            <div class="viz-meta" id="vizMeta">Load a trace to visualize block reuse.</div>
+            <div class="canvas-wrap">
+              <canvas id="blockCanvas" width="900" height="260"></canvas>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -151,10 +204,14 @@
       const recordRaw = document.getElementById('recordRaw');
       const statsEl = document.getElementById('stats');
       const parseInfo = document.getElementById('parseInfo');
+      const vizMeta = document.getElementById('vizMeta');
+      const blockCanvas = document.getElementById('blockCanvas');
+      const blockCtx = blockCanvas.getContext('2d');
 
       let records = [];
       let currentIndex = 0;
       let parseErrors = 0;
+      let blockViz = null;
 
       function fmtNum(n) {
         if (n == null || Number.isNaN(n)) return '-';
@@ -259,6 +316,182 @@
         recordRaw.textContent = JSON.stringify(r, null, 2);
       }
 
+      function normalizeHashIds(value) {
+        if (value == null) return [];
+        if (Array.isArray(value)) return value.map(v => Number(v));
+        return [Number(value)];
+      }
+
+      function topSystemPrompts(items, maxPrefixBlocks, minShare) {
+        const prefixCounts = new Map();
+        let total = 0;
+        for (const record of items) {
+          const blocks = normalizeHashIds(record.hash_ids);
+          if (!blocks.length) continue;
+          total += 1;
+          const maxLen = Math.min(blocks.length, maxPrefixBlocks);
+          for (let len = 1; len <= maxLen; len += 1) {
+            const key = blocks.slice(0, len).join(',');
+            prefixCounts.set(key, (prefixCounts.get(key) || 0) + 1);
+          }
+        }
+        const minCount = Math.max(1, Math.floor(total * minShare));
+        const candidates = [];
+        for (const [key, count] of prefixCounts.entries()) {
+          if (count >= minCount) {
+            const prefix = key.split(',').map(v => Number(v));
+            candidates.push({ prefix, count });
+          }
+        }
+        candidates.sort((a, b) => (b.prefix.length - a.prefix.length) || (b.count - a.count));
+        const selected = [];
+        for (const cand of candidates) {
+          const covered = selected.some(sel => cand.prefix.slice(0, sel.prefix.length).every((v, i) => v === sel.prefix[i]));
+          if (covered) continue;
+          selected.push(cand);
+        }
+        selected.sort((a, b) => b.count - a.count);
+        return { selected, total };
+      }
+
+      function analyzeSessionReuse(items, sessionGapMs) {
+        const reuseBlocks = new Set();
+        const activeSessions = [];
+
+        function matchBlocks(prefix, blocks, length) {
+          if (length <= 0) return false;
+          for (let i = 0; i < length; i += 1) {
+            if (prefix[i] !== blocks[i]) return false;
+          }
+          return true;
+        }
+
+        function finalizeSession(session) {
+          return session;
+        }
+
+        for (let idx = 0; idx < items.length; idx += 1) {
+          const record = items[idx];
+          const blocks = normalizeHashIds(record.hash_ids);
+          const ts = Number(record.timestamp || 0);
+          const inputLen = Number(record.input_length || 0);
+          const ignoreLastBlock = inputLen % 512 !== 0;
+          const compareLen = ignoreLastBlock ? Math.max(blocks.length - 1, 0) : blocks.length;
+
+          if (ts > 0 && sessionGapMs > 0) {
+            const expired = activeSessions.filter(s => s.lastTs != null && (ts - s.lastTs) > sessionGapMs);
+            for (const s of expired) finalizeSession(s);
+            for (const s of expired) {
+              const idx = activeSessions.indexOf(s);
+              if (idx >= 0) activeSessions.splice(idx, 1);
+            }
+          }
+
+          let bestIdx = -1;
+          let bestLen = -1;
+          for (let sIdx = 0; sIdx < activeSessions.length; sIdx += 1) {
+            const session = activeSessions[sIdx];
+            const prefix = session.blocks;
+            const prefixLen = session.compareLen;
+            const matchLen = Math.min(prefixLen, compareLen);
+            if (prefix.length && matchBlocks(prefix, blocks, matchLen)) {
+              if (prefix.length > bestLen) {
+                bestLen = prefix.length;
+                bestIdx = sIdx;
+              }
+            }
+          }
+
+          if (bestIdx === -1) {
+            activeSessions.push({
+              blocks,
+              compareLen,
+              count: 1,
+              lastTs: ts > 0 ? ts : null,
+            });
+            continue;
+          }
+
+          const session = activeSessions[bestIdx];
+          const matchLen = Math.min(session.compareLen, compareLen);
+          for (let i = 0; i < matchLen; i += 1) reuseBlocks.add(blocks[i]);
+          session.blocks = blocks;
+          session.compareLen = compareLen;
+          session.count += 1;
+          session.lastTs = ts > 0 ? ts : session.lastTs;
+        }
+
+        return reuseBlocks;
+      }
+
+      function buildBlockViz(items) {
+        const { selected: prompts } = topSystemPrompts(items, 8, 0.02);
+        const systemBlocks = new Set();
+        for (const { prefix } of prompts) {
+          for (const id of prefix) systemBlocks.add(id);
+        }
+        const sessionBlocks = analyzeSessionReuse(items, 0);
+        return { systemBlocks, sessionBlocks };
+      }
+
+      function renderBlockViz() {
+        if (!blockViz) return;
+        const { systemBlocks, sessionBlocks } = blockViz;
+        const rows = records;
+        const rowCount = rows.length;
+        let maxCols = 0;
+        let totalDots = 0;
+        const counts = { system: 0, session: 0, overlap: 0, other: 0 };
+        const rowBlocks = rows.map(r => {
+          const blocks = normalizeHashIds(r.hash_ids);
+          maxCols = Math.max(maxCols, blocks.length);
+          totalDots += blocks.length;
+          return blocks;
+        });
+
+        const width = blockCanvas.clientWidth || blockCanvas.width;
+        const dot = 2;
+        const gap = 1;
+        const cell = dot + gap;
+        const pad = 10;
+        const cols = Math.max(1, maxCols);
+        const neededWidth = pad * 2 + cols * cell;
+        const height = pad * 2 + rowCount * cell;
+
+        blockCanvas.width = Math.max(300, Math.max(width, neededWidth));
+        blockCanvas.height = Math.max(120, height);
+
+        blockCtx.clearRect(0, 0, blockCanvas.width, blockCanvas.height);
+
+        const color = {
+          system: '#1d6cf2',
+          session: '#00a878',
+          overlap: '#6a4df5',
+          other: '#c7cbd6',
+        };
+
+        for (let r = 0; r < rowCount; r += 1) {
+          const blocks = rowBlocks[r];
+          for (let c = 0; c < blocks.length; c += 1) {
+            const id = blocks[c];
+            const isSystem = systemBlocks.has(id);
+            const isSession = sessionBlocks.has(id);
+            let cat = 'other';
+            if (isSystem && isSession) cat = 'overlap';
+            else if (isSystem) cat = 'system';
+            else if (isSession) cat = 'session';
+            counts[cat] += 1;
+            const x = pad + c * cell;
+            const y = pad + r * cell;
+            blockCtx.fillStyle = color[cat];
+            blockCtx.fillRect(x, y, dot, dot);
+          }
+        }
+
+        const pct = (n) => (totalDots ? ((n / totalDots) * 100).toFixed(2) : '0.00');
+        vizMeta.textContent = `Dots: ${fmtNum(totalDots)} (1 dot per block, 1 row per request) · System: ${fmtNum(counts.system)} (${pct(counts.system)}%) · Session: ${fmtNum(counts.session)} (${pct(counts.session)}%) · Overlap: ${fmtNum(counts.overlap)} (${pct(counts.overlap)}%) · Other: ${fmtNum(counts.other)} (${pct(counts.other)}%)`;
+      }
+
       fileInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -291,12 +524,16 @@
         if (records.length) {
           setStats(records);
           setRecord(0);
+          blockViz = buildBlockViz(records);
+          renderBlockViz();
         } else {
           indexInfo.textContent = 'No records parsed';
           recordFields.innerHTML = '';
           recordRaw.textContent = 'Failed to parse file.';
           statsEl.innerHTML = '';
           parseInfo.textContent = '';
+          vizMeta.textContent = 'Load a trace to visualize block reuse.';
+          blockCtx.clearRect(0, 0, blockCanvas.width, blockCanvas.height);
         }
       });
 
@@ -306,6 +543,11 @@
         const idx = parseInt(gotoIndex.value, 10);
         if (!Number.isFinite(idx)) return;
         setRecord(idx - 1);
+      });
+
+      window.addEventListener('resize', () => {
+        if (!records.length) return;
+        renderBlockViz();
       });
     </script>
   </body>

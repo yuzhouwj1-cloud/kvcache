@@ -25,6 +25,12 @@ class SimulatorConfig:
     l1_cache_capacity_blocks: Optional[int]
     l2_cache_capacity_blocks: Optional[int]
     policy: str
+    cache_ttl_ms: Optional[int]
+    lru_k: int
+    twoq_a1in_fraction: float
+    twoq_a1out_fraction: float
+    arc_p_init_fraction: float
+    tenant_partition_count: int
     reuse_model: str
     reuse_zipf_a: float
     workload_type: str
@@ -127,6 +133,12 @@ def load_config(path: str | Path) -> SimulatorConfig:
         l1_cache_capacity_blocks=l1_cache_capacity_blocks,
         l2_cache_capacity_blocks=l2_cache_capacity_blocks,
         policy=str(data.get("policy", "lru")),
+        cache_ttl_ms=_maybe_int(data.get("cache_ttl_ms")),
+        lru_k=int(data.get("lru_k", 2)),
+        twoq_a1in_fraction=float(data.get("twoq_a1in_fraction", 0.25)),
+        twoq_a1out_fraction=float(data.get("twoq_a1out_fraction", 0.5)),
+        arc_p_init_fraction=float(data.get("arc_p_init_fraction", 0.5)),
+        tenant_partition_count=int(data.get("tenant_partition_count", 1)),
         reuse_model=str(data.get("reuse_model", "zipf")),
         reuse_zipf_a=float(data.get("reuse_zipf_a", 1.2)),
         workload_type=workload_type,

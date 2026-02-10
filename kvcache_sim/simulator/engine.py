@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from kvcache_sim.config import SimulatorConfig
 from kvcache_sim.requests.models import Request
-from kvcache_sim.cache.interfaces import Cache, CacheLookup
+from kvcache_sim.cache.interfaces import Cache, CacheLookup, CacheMetadata
 from kvcache_sim.analysis.metrics import MetricsCollector, TimeModel
 
 
@@ -16,6 +16,12 @@ class Simulator:
     time_model: TimeModel
 
     def handle_request(self, req: Request) -> None:
+        metadata = CacheMetadata(
+            timestamp_ms=req.timestamp_ms,
+            priority=req.priority,
+            pinned=req.pinned,
+            tenant_id=req.tenant_id,
+        )
         if req.block_hashes:
             total_tokens = req.input_length or req.sequence_length
             block_tokens = _split_tokens(total_tokens, len(req.block_hashes), self.cfg.block_size_tokens)
@@ -31,7 +37,7 @@ class Simulator:
             for block_id, tokens in zip(req.block_hashes, block_tokens):
                 kv_bytes = tokens * self.cfg.model_kv_bytes_per_token
                 if prefix_active:
-                    result = self.cache.get(int(block_id), kv_bytes)
+                    result = self.cache.get(int(block_id), kv_bytes, metadata)
                     if result.hit:
                         prefix_hits += 1
                         prefix_hit_tokens += tokens
@@ -45,7 +51,7 @@ class Simulator:
                 # Prefix cache: after first miss, treat the rest as misses and write KV.
                 miss_bytes += kv_bytes
                 write_bytes += kv_bytes
-                self.cache.put(int(block_id), kv_bytes)
+                self.cache.put(int(block_id), kv_bytes, metadata)
 
             kv_bytes_total = l1_bytes + l2_bytes + miss_bytes
             ttft_ms = self.time_model.estimate_ttft_ms(
@@ -74,7 +80,7 @@ class Simulator:
             return
 
         kv_bytes = req.sequence_length * self.cfg.model_kv_bytes_per_token
-        cache_result = self.cache.get(req.sequence_id, kv_bytes)
+        cache_result = self.cache.get(req.sequence_id, kv_bytes, metadata)
         l1_bytes = kv_bytes if cache_result.hit and cache_result.level != "l2" else 0
         l2_bytes = kv_bytes if cache_result.hit and cache_result.level == "l2" else 0
         miss_bytes = kv_bytes if not cache_result.hit else 0

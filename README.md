@@ -24,7 +24,7 @@ configs/                  # Example configs
 ```
 
 ## Config Notes
-- Policies: `lru`, `lfu`, `hierarchical_lru` (use `l1_cache_capacity_bytes` + `l2_cache_capacity_bytes`).
+- Policies: `lru`, `fifo`, `mru`, `lfu`, `ttl`, `2q`, `arc`, `lru_k`, `clock`, `clock_pro`, `priority_lru`, `tenant_lru`, `hierarchical_lru` (use `l1_cache_capacity_bytes` + `l2_cache_capacity_bytes`).
 - Workloads: `synthetic` (default) or `trace` (CSV with `sequence_id`, `sequence_length`, optional `request_type`).
 - JSONL traces: support Mooncake-style records with `timestamp`, `input_length`, `output_length`, `hash_ids` (block hashes).
 - Sequence lengths: fixed (`sequence_length`) or `sequence_length_dist` with `dist` in `fixed|uniform|normal|lognormal`.
@@ -32,7 +32,9 @@ configs/                  # Example configs
 - Block size: `block_size_tokens` (default `512`) controls per-block KV size for trace inputs.
 - Prefix cache: JSONL traces use prefix-hit semantics (stop at first miss; remaining blocks treated as misses and written).
 - Cache sizing: `cache_capacity_bytes` is still supported, but you can also specify `cache_capacity_blocks` (block count) which is converted using `block_size_tokens * model_kv_bytes_per_token`.
-- Trace cache sizing: `workload.cache_capacity_fraction` (or `trace_cache_capacity_fraction`) sets cache capacity to a fraction of unique `hash_ids` in JSONL traces (deduplicated by block ID); supports `lru` and `lfu` policies.
+<<<<<<< HEAD
+- Trace cache sizing: `workload.cache_capacity_fraction` (or `trace_cache_capacity_fraction`) sets cache capacity to a fraction of unique `hash_ids` in JSONL traces (deduplicated by block ID).
+- Policy params: `cache_ttl_ms`, `lru_k`, `twoq_a1in_fraction`, `twoq_a1out_fraction`, `arc_p_init_fraction`, `tenant_partition_count`.
 
 Example trace run:
 ```bash

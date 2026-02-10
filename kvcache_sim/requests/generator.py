@@ -84,6 +84,9 @@ def _iter_trace(trace_path: Path) -> Iterator[Request]:
                     sequence_id=int(row["sequence_id"]),
                     sequence_length=int(row["sequence_length"]),
                     request_type=row.get("request_type") or "prefill",
+                    priority=int(row.get("priority", 0) or 0),
+                    pinned=_parse_bool(row.get("pinned", False)),
+                    tenant_id=row.get("tenant_id"),
                 )
         return
 
@@ -107,6 +110,9 @@ def _iter_trace(trace_path: Path) -> Iterator[Request]:
                     timestamp_ms=int(record.get("timestamp", 0)),
                     input_length=input_length,
                     output_length=output_length,
+                    priority=int(record.get("priority", 0) or 0),
+                    pinned=_parse_bool(record.get("pinned", False)),
+                    tenant_id=record.get("tenant_id"),
                     block_hashes=hash_ids,
                 )
         if decode_errors:
@@ -122,3 +128,13 @@ def _normalize_hash_ids(value: object) -> List[int]:
     if isinstance(value, list):
         return [int(v) for v in value]
     return [int(value)]
+
+
+def _parse_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}

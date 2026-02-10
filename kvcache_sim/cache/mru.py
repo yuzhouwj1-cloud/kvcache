@@ -5,7 +5,7 @@ from collections import OrderedDict
 from kvcache_sim.cache.interfaces import Cache, CacheLookup, CacheMetadata
 
 
-class LRUCache(Cache):
+class MRUCache(Cache):
     def __init__(self, capacity_bytes: int) -> None:
         self.capacity_bytes = capacity_bytes
         self._items: OrderedDict[int, int] = OrderedDict()
@@ -30,15 +30,12 @@ class LRUCache(Cache):
             self._items.pop(key, None)
         self._insert(key, size_bytes)
 
-    def contains(self, key: int) -> bool:
-        return key in self._items
-
     def _insert(self, key: int, size_bytes: int) -> None:
         if size_bytes > self.capacity_bytes:
             return
 
         while self._used_bytes + size_bytes > self.capacity_bytes and self._items:
-            _, evicted_size = self._items.popitem(last=False)
+            _, evicted_size = self._items.popitem(last=True)
             self._used_bytes -= evicted_size
 
         self._items[key] = size_bytes
